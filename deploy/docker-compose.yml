@@ -1,0 +1,17 @@
+services:
+  edge-streamer:
+    image: edge_streamer:latest
+    container_name: edge_streamer
+    environment:
+      CLOUD_REDIS_HOST: 82.25.104.53
+      CLOUD_REDIS_PORT: 6380
+    entrypoint: ["/bin/bash", "/app/entrypoint.sh"]
+    volumes:
+      - /home/mantra/anubhav/development/edge-streamer:/app
+    networks:
+      - edge_net
+    restart: unless-stopped
+
+networks:
+  edge_net:
+    driver: bridge
