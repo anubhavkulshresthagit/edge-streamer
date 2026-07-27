@@ -44,11 +44,15 @@ int relay_rtsp(const std::string& in_url, const std::string& out_url,
     in->interrupt_callback = {interrupt_cb, &ictx};
 
     AVDictionary* iopts = nullptr;
-    av_dict_set(&iopts, "rtsp_transport", "tcp", 0);   // reliable over lossy links
-    av_dict_set(&iopts, "rtsp_flags", "prefer_tcp", 0);
-    av_dict_set(&iopts, "stimeout", "5000000", 0);     // socket timeout, older ffmpeg (us)
-    av_dict_set(&iopts, "timeout", "5000000", 0);      // socket timeout, newer ffmpeg (us)
+    av_dict_set(&iopts, "rtsp_transport", "tcp", 0);   // pull over TCP (no UDP loss)
+    av_dict_set(&iopts, "stimeout", "5000000", 0);     // socket read timeout (us)
     av_dict_set(&iopts, "max_delay", "500000", 0);
+    av_dict_set(&iopts, "fflags", "nobuffer", 0);      // lower latency
+    // Do NOT set "timeout" on the RTSP demuxer: on modern FFmpeg it means
+    // "listen timeout" and implies server/listen mode, so the open tries to
+    // bind the camera address instead of connecting to it ("Cannot assign
+    // requested address"). Hard timeouts are enforced by the interrupt
+    // callback (kIoTimeoutUs) instead.
 
     ictx.deadline_us = av_gettime_relative() + kIoTimeoutUs;
     int ret = avformat_open_input(&in, in_url.c_str(), nullptr, &iopts);
@@ -65,13 +69,15 @@ int relay_rtsp(const std::string& in_url, const std::string& out_url,
     if (!out) { avformat_close_input(&in); return AVERROR_UNKNOWN; }
     out->interrupt_callback = {interrupt_cb, &ictx};
 
-    // Map video/audio streams and copy codec params (no re-encode).
+    // Map video streams and copy codec params (no re-encode).
+    // Video-only, matching `-an`. To also relay audio, change the condition to:
+    //   if (par->codec_type != AVMEDIA_TYPE_VIDEO &&
+    //       par->codec_type != AVMEDIA_TYPE_AUDIO) continue;
     std::vector<int> smap(in->nb_streams, -1);
     int oidx = 0;
     for (unsigned i = 0; i < in->nb_streams; ++i) {
         AVCodecParameters* par = in->streams[i]->codecpar;
-        if (par->codec_type != AVMEDIA_TYPE_VIDEO &&
-            par->codec_type != AVMEDIA_TYPE_AUDIO)
+        if (par->codec_type != AVMEDIA_TYPE_VIDEO)
             continue;
 
         AVStream* os = avformat_new_stream(out, nullptr);
